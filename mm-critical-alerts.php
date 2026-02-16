@@ -69,10 +69,6 @@ function mm_ca_shutdown_capture() {
   mm_ca_handle_fatal($error);
 }
 
-function mmca_mail_content_type() {
-  return 'text/plain; charset=UTF-8';
-}
-
 /**
  * Main fatal handler. Logs and emails.
  */
@@ -157,7 +153,6 @@ function mm_ca_handle_fatal(array $error) {
   $admin_log_url = function_exists('admin_url') ? admin_url('tools.php?page=mm-critical-alerts') : '';
   $site_health_url = function_exists('admin_url') ? admin_url('site-health.php?tab=debug') : '';
 
-  // Trim and sanitize hosting logs url so email clients are more likely to link it
   $hosting_logs_url = isset($settings['hosting_logs_url']) ? trim((string) $settings['hosting_logs_url']) : '';
   $hosting_logs_url = $hosting_logs_url ? esc_url_raw($hosting_logs_url) : '';
 
@@ -165,72 +160,71 @@ function mm_ca_handle_fatal(array $error) {
     ? MMCA_Logger::error_type_label($type)
     : 'Fatal';
 
-  $lines = array();
-  $lines[] = 'A fatal/critical PHP error was detected.';
-  $lines[] = '';
-  $lines[] = 'Site: ' . $site_name;
-  if ($home) $lines[] = 'Home: ' . $home;
-  if ($url) {
-    $lines[] = 'Request URL: ' . $url;
+  $esc = function($v) {
+    return esc_html((string) $v);
+  };
+
+  // Build HTML email
+  $body  = '<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5;">';
+  $body .= '<h2 style="margin:0 0 12px 0;">A fatal/critical PHP error was detected</h2>';
+
+  $body .= '<table cellpadding="0" cellspacing="0" style="border-collapse: collapse;">';
+  $body .= '<tr><td style="padding:4px 12px 4px 0;"><strong>Site</strong></td><td style="padding:4px 0;">' . $esc($site_name) . '</td></tr>';
+
+  if ($home) {
+    $body .= '<tr><td style="padding:4px 12px 4px 0;"><strong>Home</strong></td><td style="padding:4px 0;"><a href="' . esc_url($home) . '">' . $esc($home) . '</a></td></tr>';
   }
-  $lines[] = 'Time (UTC): ' . gmdate('Y-m-d H:i:s');
-  $lines[] = '';
-  $lines[] = 'Type: ' . $type_label . ' (' . $type . ')';
-  $lines[] = 'Message: ' . $message;
-  $lines[] = 'File: ' . $file;
-  $lines[] = 'Line: ' . $line;
+
+  if ($url) {
+    $body .= '<tr><td style="padding:4px 12px 4px 0;"><strong>Request URL</strong></td><td style="padding:4px 0;"><a href="' . esc_url($url) . '">' . $esc($url) . '</a></td></tr>';
+  }
+
+  $body .= '<tr><td style="padding:4px 12px 4px 0;"><strong>Time (UTC)</strong></td><td style="padding:4px 0;">' . $esc(gmdate('Y-m-d H:i:s')) . '</td></tr>';
+  $body .= '<tr><td style="padding:4px 12px 4px 0;"><strong>Type</strong></td><td style="padding:4px 0;">' . $esc($type_label) . ' (' . (int) $type . ')</td></tr>';
+  $body .= '</table>';
+
+  $body .= '<hr style="margin:14px 0;">';
+  $body .= '<p style="margin:0 0 8px 0;"><strong>Message</strong><br>' . $esc($message) . '</p>';
+  $body .= '<p style="margin:0 0 8px 0;"><strong>File</strong><br>' . $esc($file) . '</p>';
+  $body .= '<p style="margin:0 0 8px 0;"><strong>Line</strong><br>' . (int) $line . '</p>';
 
   if (!empty($settings['include_request'])) {
-    $lines[] = '';
-    $lines[] = 'Request details:';
-    $lines[] = 'Request URI: ' . (isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '(unknown)');
-    $lines[] = 'Method: ' . (isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : '(unknown)');
-    $lines[] = 'IP: ' . (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '(unknown)');
-    $lines[] = 'User Agent: ' . (isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '(unknown)');
+    $body .= '<hr style="margin:14px 0;">';
+    $body .= '<p style="margin:0 0 6px 0;"><strong>Request details</strong></p>';
+    $body .= '<ul style="margin:0 0 0 18px; padding:0;">';
+    $body .= '<li><strong>Request URI:</strong> ' . $esc(isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '(unknown)') . '</li>';
+    $body .= '<li><strong>Method:</strong> ' . $esc(isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : '(unknown)') . '</li>';
+    $body .= '<li><strong>IP:</strong> ' . $esc(isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '(unknown)') . '</li>';
+    $body .= '<li><strong>User agent:</strong> ' . $esc(isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '(unknown)') . '</li>';
+    $body .= '</ul>';
   }
 
   if (!empty($settings['include_user'])) {
-    $lines[] = '';
-    $lines[] = 'User ID: ' . (string) $user_id;
+    $body .= '<p style="margin:10px 0 0 0;"><strong>User ID:</strong> ' . (int) $user_id . '</p>';
   }
 
-  $lines[] = '';
-  $lines[] = ($log_id > 0) ? ('Plugin log entry: #' . (string) $log_id) : 'Plugin log entry: (not recorded)';
+  $body .= '<hr style="margin:14px 0;">';
+  $body .= '<p style="margin:0 0 6px 0;"><strong>Quick links</strong></p>';
+  $body .= '<ul style="margin:0 0 0 18px; padding:0;">';
 
-  // Put links on their own lines so Outlook and other clients auto-link them
   if ($admin_log_url) {
-    $lines[] = '';
-    $lines[] = 'View logs (wp-admin):';
-    $lines[] = $admin_log_url;
+    $body .= '<li><a href="' . esc_url($admin_log_url) . '">View logs in wp-admin</a> (log entry #' . (int) $log_id . ')</li>';
   }
-
   if ($site_health_url) {
-    $lines[] = '';
-    $lines[] = 'Site Health debug:';
-    $lines[] = $site_health_url;
+    $body .= '<li><a href="' . esc_url($site_health_url) . '">Site Health debug</a></li>';
   }
-
   if (!empty($hosting_logs_url)) {
-    $lines[] = '';
-    $lines[] = 'Hosting error logs (20i):';
-    $lines[] = $hosting_logs_url;
-  } else {
-    $lines[] = '';
-    $lines[] = 'Hosting error logs (20i):';
-    $lines[] = '(add a URL in Tools > Critical alerts)';
+    $body .= '<li><a href="' . esc_url($hosting_logs_url) . '">Hosting error logs (20i)</a></li>';
   }
-
   if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-    $lines[] = '';
-    $lines[] = 'WP debug log path:';
-    $lines[] = trailingslashit(WP_CONTENT_DIR) . 'debug.log';
+    $body .= '<li><strong>WP debug log path:</strong> ' . $esc(trailingslashit(WP_CONTENT_DIR) . 'debug.log') . '</li>';
   }
 
-  $body = implode("\n", $lines);
+  $body .= '</ul>';
+  $body .= '</div>';
 
-  add_filter('wp_mail_content_type', 'mmca_mail_content_type');
-  $sent = wp_mail($to, $subject, $body);
-  remove_filter('wp_mail_content_type', 'mmca_mail_content_type');
+  $headers = array('Content-Type: text/html; charset=UTF-8');
+  $sent = wp_mail($to, $subject, $body, $headers);
 
   if ($sent) {
     $last_sent[$sig] = $now;
