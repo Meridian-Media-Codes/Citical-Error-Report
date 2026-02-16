@@ -156,7 +156,10 @@ function mm_ca_handle_fatal(array $error) {
 
   $admin_log_url = function_exists('admin_url') ? admin_url('tools.php?page=mm-critical-alerts') : '';
   $site_health_url = function_exists('admin_url') ? admin_url('site-health.php?tab=debug') : '';
-  $hosting_logs_url = isset($settings['hosting_logs_url']) ? esc_url_raw($settings['hosting_logs_url']) : '';
+
+  // Trim and sanitize hosting logs url so email clients are more likely to link it
+  $hosting_logs_url = isset($settings['hosting_logs_url']) ? trim((string) $settings['hosting_logs_url']) : '';
+  $hosting_logs_url = $hosting_logs_url ? esc_url_raw($hosting_logs_url) : '';
 
   $type_label = (class_exists('MMCA_Logger') && method_exists('MMCA_Logger', 'error_type_label'))
     ? MMCA_Logger::error_type_label($type)
@@ -167,6 +170,9 @@ function mm_ca_handle_fatal(array $error) {
   $lines[] = '';
   $lines[] = 'Site: ' . $site_name;
   if ($home) $lines[] = 'Home: ' . $home;
+  if ($url) {
+    $lines[] = 'Request URL: ' . $url;
+  }
   $lines[] = 'Time (UTC): ' . gmdate('Y-m-d H:i:s');
   $lines[] = '';
   $lines[] = 'Type: ' . $type_label . ' (' . $type . ')';
@@ -176,7 +182,7 @@ function mm_ca_handle_fatal(array $error) {
 
   if (!empty($settings['include_request'])) {
     $lines[] = '';
-    $lines[] = 'URL: ' . ($url ? $url : '(unknown)');
+    $lines[] = 'Request details:';
     $lines[] = 'Request URI: ' . (isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '(unknown)');
     $lines[] = 'Method: ' . (isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : '(unknown)');
     $lines[] = 'IP: ' . (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '(unknown)');
@@ -191,17 +197,33 @@ function mm_ca_handle_fatal(array $error) {
   $lines[] = '';
   $lines[] = ($log_id > 0) ? ('Plugin log entry: #' . (string) $log_id) : 'Plugin log entry: (not recorded)';
 
-  if ($admin_log_url) $lines[] = 'View logs (wp-admin): ' . $admin_log_url;
-  if ($site_health_url) $lines[] = 'Site Health debug: ' . $site_health_url;
+  // Put links on their own lines so Outlook and other clients auto-link them
+  if ($admin_log_url) {
+    $lines[] = '';
+    $lines[] = 'View logs (wp-admin):';
+    $lines[] = $admin_log_url;
+  }
+
+  if ($site_health_url) {
+    $lines[] = '';
+    $lines[] = 'Site Health debug:';
+    $lines[] = $site_health_url;
+  }
 
   if (!empty($hosting_logs_url)) {
-    $lines[] = 'Hosting error logs: ' . $hosting_logs_url;
+    $lines[] = '';
+    $lines[] = 'Hosting error logs (20i):';
+    $lines[] = $hosting_logs_url;
   } else {
-    $lines[] = 'Hosting error logs: (add a URL in Tools > Critical alerts)';
+    $lines[] = '';
+    $lines[] = 'Hosting error logs (20i):';
+    $lines[] = '(add a URL in Tools > Critical alerts)';
   }
 
   if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-    $lines[] = 'WP debug log path: ' . trailingslashit(WP_CONTENT_DIR) . 'debug.log';
+    $lines[] = '';
+    $lines[] = 'WP debug log path:';
+    $lines[] = trailingslashit(WP_CONTENT_DIR) . 'debug.log';
   }
 
   $body = implode("\n", $lines);
