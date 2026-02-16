@@ -32,8 +32,8 @@ function mmca_maybe_install() {
 
   if (get_option('mmca_settings', null) === null) {
     add_option('mmca_settings', array(
-      'to_email'           => get_option('admin_email'),
-      'subject_prefix'     => '🚨 Critical error',
+      'to_email'           => 'jon@meridian-media.co.uk',
+      'subject_prefix'     => '🚨 This website has a critical error 🚨',
       'throttle_minutes'   => 30,
       'include_request'    => 1,
       'include_user'       => 1,
