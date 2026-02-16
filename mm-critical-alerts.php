@@ -2,24 +2,55 @@
 /**
  * Plugin Name: MM Critical Alerts
  * Description: Sends an immediate email alert when a fatal/critical PHP error occurs, and logs the error for review in wp-admin.
- * Version: 1.0.02
+ * Version: 1.0.2
  * Author: Meridian Media
  * License: GPLv2 or later
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('MMCA_VERSION', '1.0.0');
+define('MMCA_VERSION', '1.0.2');
 define('MMCA_PLUGIN_FILE', __FILE__);
-define('MMCA_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MMCA_PLUGIN_URL', plugin_dir_url(__FILE__));
 
-require_once MMCA_PLUGIN_DIR . 'includes/logger.php';
-require_once MMCA_PLUGIN_DIR . 'includes/admin.php';
+// Includes (use __DIR__ so this works as MU-loaded or normal plugin)
+require_once __DIR__ . '/includes/logger.php';
+require_once __DIR__ . '/includes/admin.php';
+
+/**
+ * Install / upgrade tasks (MU-safe).
+ * MU plugins do not run register_activation_hook, so we version-gate installs here.
+ */
+function mmca_maybe_install() {
+  $installed = get_option('mmca_installed_version', '');
+  if ($installed === MMCA_VERSION) {
+    return;
+  }
+
+  if (class_exists('MMCA_Logger') && method_exists('MMCA_Logger', 'install')) {
+    MMCA_Logger::install();
+  }
+
+  if (get_option('mmca_settings', null) === null) {
+    add_option('mmca_settings', array(
+      'to_email'           => get_option('admin_email'),
+      'subject_prefix'     => '🚨 Critical error',
+      'throttle_minutes'   => 30,
+      'include_request'    => 1,
+      'include_user'       => 1,
+      'hosting_logs_url'   => '',
+      'only_frontend'      => 0,
+      'ignore_cli'         => 1,
+      'ignore_wp_cron'     => 1,
+    ));
+  }
+
+  update_option('mmca_installed_version', MMCA_VERSION, false);
+}
+add_action('init', 'mmca_maybe_install', 1);
 
 /*
   Register shutdown capture as early as possible.
-  This is the key change. Do not register another shutdown handler later.
+  Do not register another shutdown handler later.
 */
 if (!defined('MM_CA_REGISTERED')) {
   define('MM_CA_REGISTERED', true);
@@ -35,10 +66,7 @@ function mm_ca_shutdown_capture() {
   $fatal_types = array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR);
   if (!in_array((int) $error['type'], $fatal_types, true)) return;
 
-  // Delegate to the main handler
-  if (function_exists('mm_ca_handle_fatal')) {
-    mm_ca_handle_fatal($error);
-  }
+  mm_ca_handle_fatal($error);
 }
 
 function mmca_mail_content_type() {
@@ -47,13 +75,12 @@ function mmca_mail_content_type() {
 
 /**
  * Main fatal handler. Logs and emails.
- * Keep this function "plain" so it can run at shutdown even if other hooks did not fire.
  */
 function mm_ca_handle_fatal(array $error) {
   $settings = get_option('mmca_settings', array());
   $settings = is_array($settings) ? $settings : array();
 
-  // Ignore CLI by default (WP CLI, cron jobs, etc)
+  // Ignore CLI by default
   $sapi = function_exists('php_sapi_name') ? php_sapi_name() : '';
   if (!empty($settings['ignore_cli']) && ($sapi === 'cli' || $sapi === 'phpdbg')) {
     return;
@@ -88,7 +115,7 @@ function mm_ca_handle_fatal(array $error) {
     $user_id = (int) get_current_user_id();
   }
 
-  // Ensure logger exists. If it does not, still attempt an email.
+  // Log if available
   $log_id = 0;
   if (class_exists('MMCA_Logger') && method_exists('MMCA_Logger', 'log')) {
     $log_id = (int) MMCA_Logger::log(array(
@@ -103,7 +130,7 @@ function mm_ca_handle_fatal(array $error) {
     ));
   }
 
-  // Throttle email per unique signature
+  // Throttle email per signature
   $throttle_minutes = isset($settings['throttle_minutes']) ? (int) $settings['throttle_minutes'] : 30;
   if ($throttle_minutes < 0) $throttle_minutes = 0;
 
@@ -162,11 +189,7 @@ function mm_ca_handle_fatal(array $error) {
   }
 
   $lines[] = '';
-  if ($log_id > 0) {
-    $lines[] = 'Plugin log entry: #' . (string) $log_id;
-  } else {
-    $lines[] = 'Plugin log entry: (not recorded)';
-  }
+  $lines[] = ($log_id > 0) ? ('Plugin log entry: #' . (string) $log_id) : 'Plugin log entry: (not recorded)';
 
   if ($admin_log_url) $lines[] = 'View logs (wp-admin): ' . $admin_log_url;
   if ($site_health_url) $lines[] = 'Site Health debug: ' . $site_health_url;
@@ -178,8 +201,7 @@ function mm_ca_handle_fatal(array $error) {
   }
 
   if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-    $debug_log_path = trailingslashit(WP_CONTENT_DIR) . 'debug.log';
-    $lines[] = 'WP debug log path: ' . $debug_log_path;
+    $lines[] = 'WP debug log path: ' . trailingslashit(WP_CONTENT_DIR) . 'debug.log';
   }
 
   $body = implode("\n", $lines);
@@ -193,26 +215,6 @@ function mm_ca_handle_fatal(array $error) {
     update_option('mmca_last_sent', $last_sent, false);
   }
 }
-
-register_activation_hook(__FILE__, function () {
-  if (class_exists('MMCA_Logger') && method_exists('MMCA_Logger', 'install')) {
-    MMCA_Logger::install();
-  }
-
-  if (get_option('mmca_settings', null) === null) {
-    add_option('mmca_settings', array(
-      'to_email'           => get_option('admin_email'),
-      'subject_prefix'     => '🚨 Critical error',
-      'throttle_minutes'   => 30,
-      'include_request'    => 1,
-      'include_user'       => 1,
-      'hosting_logs_url'   => '',
-      'only_frontend'      => 0,
-      'ignore_cli'         => 1,
-      'ignore_wp_cron'     => 1,
-    ));
-  }
-});
 
 add_action('plugins_loaded', function () {
   if (class_exists('MMCA_Logger') && method_exists('MMCA_Logger', 'init')) {
