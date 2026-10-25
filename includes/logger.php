@@ -30,6 +30,10 @@ class MMCA_Logger {
             url TEXT NULL,
             user_id BIGINT(20) UNSIGNED NULL,
             php_sapi VARCHAR(32) NULL,
+            context VARCHAR(20) NULL,
+            culprit VARCHAR(120) NULL,
+            decision VARCHAR(255) NULL,
+            mail_status VARCHAR(20) NULL,
             PRIMARY KEY  (id),
             KEY signature (signature),
             KEY created_utc (created_utc)
@@ -47,16 +51,47 @@ class MMCA_Logger {
             'created_utc' => gmdate('Y-m-d H:i:s'),
             'signature'   => isset($data['signature']) ? sanitize_text_field($data['signature']) : '',
             'error_type'  => isset($data['error_type']) ? (int)$data['error_type'] : 0,
-            'message'     => isset($data['message']) ? (string)$data['message'] : '',
+            'message'     => isset($data['message']) ? substr((string)$data['message'], 0, 8000) : '',
             'file'        => isset($data['file']) ? (string)$data['file'] : '',
             'line'        => isset($data['line']) ? (int)$data['line'] : 0,
             'url'         => isset($data['url']) ? (string)$data['url'] : '',
             'user_id'     => isset($data['user_id']) ? (int)$data['user_id'] : 0,
             'php_sapi'    => isset($data['php_sapi']) ? sanitize_text_field($data['php_sapi']) : '',
+            'context'     => isset($data['context']) ? sanitize_text_field($data['context']) : '',
+            'culprit'     => isset($data['culprit']) ? substr(sanitize_text_field($data['culprit']), 0, 120) : '',
+            'decision'    => isset($data['decision']) ? substr(sanitize_text_field($data['decision']), 0, 255) : '',
+            'mail_status' => isset($data['mail_status']) ? sanitize_text_field($data['mail_status']) : '',
         );
 
-        $wpdb->insert($table, $row, array('%s','%s','%d','%s','%s','%d','%s','%d','%s'));
+        $inserted = $wpdb->insert($table, $row, array('%s','%s','%d','%s','%s','%d','%s','%d','%s','%s','%s','%s','%s'));
+
+        // Keep the table small: occasionally drop rows older than 60 days.
+        if ($inserted && mt_rand(1, 25) === 1) {
+            $wpdb->query($wpdb->prepare("DELETE FROM $table WHERE created_utc < %s", gmdate('Y-m-d H:i:s', time() - 60 * 86400)));
+        }
+
         return (int)$wpdb->insert_id;
+    }
+
+    public static function update_mail_status($id, $status) {
+        global $wpdb;
+        $wpdb->update(
+            self::table_name(),
+            array('mail_status' => sanitize_text_field($status)),
+            array('id' => (int)$id),
+            array('%s'),
+            array('%d')
+        );
+    }
+
+    /** Alerts from the last 7 days that never confirmed as sent (stuck 'pending' or 'failed'). */
+    public static function count_mail_problems() {
+        global $wpdb;
+        $table = self::table_name();
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $table WHERE mail_status IN ('pending','failed') AND created_utc > %s",
+            gmdate('Y-m-d H:i:s', time() - 7 * 86400)
+        ));
     }
 
     public static function error_type_label($type) {
@@ -66,6 +101,7 @@ class MMCA_Logger {
             E_CORE_ERROR => 'E_CORE_ERROR',
             E_COMPILE_ERROR => 'E_COMPILE_ERROR',
             E_USER_ERROR => 'E_USER_ERROR',
+            E_RECOVERABLE_ERROR => 'E_RECOVERABLE_ERROR',
         );
         return isset($map[$type]) ? $map[$type] : 'FATAL';
     }
